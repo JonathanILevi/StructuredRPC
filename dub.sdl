@@ -1,0 +1,13 @@
+name	"structured-rpc"
+description	"Simple, attribute driven, branching Serializer."
+authors	"Jonathan Levi"
+copyright	"Copyright © 2018, Jonathan Levi"
+license	"BSD 2-clause or BSL-1.0"
+
+target	"library"
+targetPath	"build"
+workingDirectory	"build"
+
+dependency "treeserial" version="~>1.0.0-alpha.1"
+
+
