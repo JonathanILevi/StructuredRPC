@@ -5,6 +5,9 @@ import treeserial;
 import std.traits;
 import std.meta;
 
+import std.algorithm;
+import std.range;
+
 enum RPCSrc {
 	self	= 0x1,
 	remote	= 0x2,
@@ -103,31 +106,65 @@ template rpcFunction(alias f) {
 		f(args);
 	}
 }
+template RPCParameters(alias f, ConnectionType) {
+	alias Params = Parameters!f;
+	static if (is(Params[0] == ConnectionType)) {
+		alias RPCParameters = Params[1..$];
+	}
+	else static if (is(Params[$-1] == ConnectionType)) {
+		alias RPCParameters = Params[0..$-1];
+	}
+	else {
+		alias RPCParameters = Params;
+	}
+}
+template RPCParameters(alias f) {
+	alias RPCParameters = Parameters!f;
+}
+
+template RPCParametersExt(alias rpc, alias GetConnectionType, alias RPCSrc, RPCSrc src) {
+	static if (!is(typeof(GetConnectionType) == typeof(null)))
+		alias RPCParametersExt = RPCParameters!(rpc!(src), GetConnectionType!(src));
+	else
+		alias RPCParametersExt = RPCParameters!(rpc!(src));
+}
+template rpcParametersMatch(alias rpc, alias GetConnectionType, alias RPCSrc, RPCSrc srcs) {
+	static foreach (i; 0..flags(srcs).length-1) {
+		alias Matcher = aliasSeqMatch!(RPCParametersExt!(rpc,GetConnectionType,RPCSrc,flags(srcs)[i]));
+		static if (!is(defined) && !Matcher!(RPCParametersExt!(rpc,GetConnectionType,RPCSrc,flags(srcs)[i+1]))) {
+			enum rpcParametersMatch = false;
+			enum defined;
+		}
+	}
+	static if (!is(defined))
+		enum rpcParametersMatch = true;
+}
 
 mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
 	static if (is(typeof(rpcSend))) {
 		static foreach (i, rpc; getSymbolsByUDA!(typeof(this), RPC)) {
 			mixin(q{
-				void }~__traits(identifier, rpc)~q{_send(RPCSrc srcs)(Parameters!(rpc!srcs) args) if (allParametersMatch!(staticMap!(rpc, flags!srcs))) {
-					ubyte[] data = [rpcIDs!(typeof(this))[i]];
-					scope(success)
-						rpcSend!srcs(data);
-					foreach (i, arg; args) {
-						static if (__traits(compiles, args.serialize)) {
-							static if (i==args.length-1)
-								alias Attributes = NoLength;
-							else
-								alias Attributes = AliasSeq!();
-							data ~= arg.serialize!Attributes;
+				template }~__traits(identifier, rpc)~q{_send(RPCSrc srcs) if (rpcParametersMatch!(rpc,GetConnectionType, RPCSrc, srcs)) }~"{"~q{
+					void }~__traits(identifier, rpc)~q{_send(RPCParametersExt!(rpc, GetConnectionType, RPCSrc, srcs.flags[0]) args) {
+						ubyte[] data = [rpcIDs!(typeof(this))[i]];
+						scope(success)
+							rpcSend!srcs(data);
+						foreach (i, arg; args) {
+							static if (__traits(compiles, arg.serialize)) {
+								static if (i==args.length-1)
+									alias Attributes = NoLength;
+								else
+									alias Attributes = AliasSeq!();
+								data ~= arg.serialize!Attributes;
+							}
+							else throw new RPCError("Parameter \""~typeof(arg).stringof~"\" of RPC \""~__traits(identifier, rpc)~"\" cannot be serialized.");
 						}
-						else throw new RPCError("Parameter \""~typeof(arg).stringof~"\" of RPC \""~__traits(identifier, rpc)~"\" cannot be serialized.");
 					}
-				}
+				}~"}"~q{
 			});
 		}
 	}
 	void rpcRecv(RPCSrc src)(ubyte[] data) {
-		////pragma(msg, rpcsWithID!(typeof(this)));
 		enum ids = rpcIDs!(typeof(this));
 		ubyte msgID = data.deserialize!ubyte;
 		static foreach(id; ids) {
@@ -153,7 +190,6 @@ mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
 	}
 	static if (!is(typeof(GetConnectionType) == typeof(null)))
 	void rpcRecv(RPCSrc src)(GetConnectionType!src connection, ubyte[] data) {
-		////pragma(msg, rpcsWithID!(typeof(this)));
 		enum ids = rpcIDs!(typeof(this));
 		ubyte msgID = data.deserialize!ubyte;
 		static foreach(id; ids) {
@@ -371,8 +407,8 @@ unittest {
 	assert(lastSendData == (cast(ubyte)1) ~ 1.5f.serialize);
 	a.msg2_send!(RPCSrc.remote)(1.5, 2);
 	assert(lastSendData == (cast(ubyte)1) ~ 1.5f.serialize ~ 2L.serialize);
-	assertThrown!Throwable(a.msg2_send!(RPCSrc.self | RPCSrc.remote)(1.5));
-	assertThrown!Throwable(a.msg2_send!(RPCSrc.self | RPCSrc.remote)(1.5, 2));
+	assert(!__traits(compiles, a.msg2_send!(RPCSrc.self | RPCSrc.remote)(1.5)));
+	assert(!__traits(compiles, a.msg2_send!(RPCSrc.self | RPCSrc.remote)(1.5, 2)));
 }
 
 template staticScan(alias f, List...)
@@ -402,6 +438,11 @@ if (List.length > 1)
 template staticLift(alias f) {
 	template staticLift(ts...) {
 		enum staticLift = f(ts);
+	}
+}
+template aliasSeqMatch(As...) {
+	template aliasSeqMatch(Bs...) {
+		enum aliasSeqMatch = is(As==Bs);
 	}
 }
 template parametersMatch(alias f, alias b) {
@@ -436,8 +477,14 @@ unittest {
 	assert(allParametersMatch!(c,b,a));
 	assert(!allParametersMatch!(a,d,c));
 }
-template flags(alias fs) if (is(typeof(fs)==enum)) {
-	enum flags = Filter!(staticLift!(f=>f & fs), EnumMembers!(typeof(fs)));
+////template flags(alias fs) if (is(typeof(fs)==enum)) {
+////	enum flags = Filter!(staticLift!(f=>f & fs), EnumMembers!(typeof(fs)));
+////}
+////template flags(F, F fs) if (is(F==enum)) {
+////	enum flags = Filter!(staticLift!(f=>f & fs), EnumMembers!(typeof(fs)));
+////}
+F[] flags(F)(F fs) {
+    return filter!(f=>f & fs)([EnumMembers!(F)]).array;
 }
 unittest {
 	enum E {
@@ -445,11 +492,18 @@ unittest {
 		b = 0x2,
 		c = 0x4,
 	}
-	assert(flags!(E.a|E.c) == AliasSeq!(E.a,E.c));
+	assert(flags(E.a|E.c) == [E.a,E.c]);
 }
 
 template Exclam(alias t, Ts...) {
 	alias Exclam = t!Ts;
+}
+template AliasSeqOf(alias R) if (isInputRange!(typeof(R))) {
+    import std.typetuple : TT = TypeTuple;
+    static if (R.empty)
+        alias AliasSeqOf = TT!();
+        else
+        alias AliasSeqOf = TT!(R.front(), AliasSeqOf!(R.dropOne()));
 }
 
  
