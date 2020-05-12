@@ -114,15 +114,6 @@ mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
 	////		}");
 	////	}
 	////}
-	////static foreach (name; Filter!(isNotThis, __traits(derivedMembers, typeof(this)))) {
-	////	enum string fieldCode = `Alias!(__traits(getMember, typeof(this), "` ~ name ~ `"))`;
-	////	mixin("alias field = " ~ fieldCode ~ ";");
-	////	pragma(msg, TemplateArgsOf!(field));
-	////	pragma(msg, __traitsParameters!field);
-	////	static if (__traits(compiles, hasUDA!(field, RPC))) {
-	////		pragma(msg, "hasUDA");
-	////	}
-	////}
 	void rpcRecv(RPCSrc src)(ubyte[] data) {
 		////pragma(msg, rpcsWithID!(typeof(this)));
 		enum ids = rpcIDs!(typeof(this));
@@ -145,13 +136,6 @@ mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
 					}
 					else throw new RPCError("Parameter \""~Param.stringof~"\" of RPC \""~__traits(identifier, rpcTemplate)~"\" cannot be deserialized.  If it is a ConnectionType then you called the wrong rpcRecv (call rpcRecv with a connection).");
 				}
-				////static assert(__traits(compiles, rpc!src), "RPC funciton must be a tempate with RPCSrc (`void fun(RPCSrc src)(arg)`).");
-				////////static assert(Parameters!(rpc!src).length == 1 && __traits(compiles, rpc!src(data[1..$].deserialize!(Parameters!(rpc!src)[0]))), "no connection was passed to rpcRecv so: RPC function must take 1 serializable argument; if a connection was passed: RPC function can also take 2 arguments, a `Connection` and another serializable one (either order).");
-				////pragma(msg, Parameters!(rpc!src).length);
-				////pragma(msg, __traits(compiles, rpc!src(data[1..$].deserialize!(Parameters!(rpc!src)[0]))));
-				////static if (Parameters!(rpc!src).length == 1 && __traits(compiles, rpc!src(data[1..$].deserialize!(Parameters!(rpc!src)[0]))))
-				////	rpc!src(data[1..$].deserialize!(Parameters!(rpc!src)[0]));
-				////else assert(false, "No connection was passed to rpcRecv so: RPC function must take 1 serializable argument; if a connection was passed: RPC function can also take 2 arguments, a `Connection` and another serializable one (either order).");
 			}
 		}
 	}
@@ -178,20 +162,6 @@ mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
 					}
 					else throw new RPCError("Parameter `"~Param.stringof~"` of RPC `"~__traits(identifier, rpcTemplate)~"` cannot be deserialized.  If you think this should be the connection type, then for `"~RPCSrc.stringof~"."~__traits(identifier, src)~"` it should be of type `"~GetConnectionType!src.stringof~"` (Correct parameter or `GetConnectionType` or src).");
 				}
-				///ralias rpc = rpcByID!(typeof(this),id);
-				///rstatic assert(__traits(compiles, rpc!src), "RPC funciton must be a tempate with RPCSrc (`void fun(RPCSrc src)(arg)`).");
-				////static if (Parameters!(rpc!src).length == 1) {
-				////	static assert(__traits(compiles, rpc!src(data[1..$].deserialize!(Parameters!(rpc!src)[0]))), "RPC function must take either 1 serializable argument or 2 arguments, a `Connection` and another serializable one (either order).");
-				////	rpc!src(data[1..$].deserialize!(Parameters!(rpc!src)[0]));
-				////}
-				////else static if (Parameters!(rpc!src).length == 2) {
-				////	static if (__traits(compiles, rpc!src(connection, data[1..$].deserialize!(Parameters!(rpc!src)[1]))))
-				////		rpc!src(connection, data[1..$].deserialize!(Parameters!(rpc!src)[1]));
-				////	else static if (__traits(compiles, rpc!src(data[1..$].deserialize!(Parameters!(rpc!src)[0]),connection)))
-				////		rpc!src(data[1..$].deserialize!(Parameters!(rpc!src)[0]), connection);
-				////	else static assert(false, "RPC function must take either 1 serializable argument or 2 arguments, a `Connection` and another serializable one (either order).");
-				////}
-				////else static assert(false, "RPC function must take either 1 serializable argument or 2 arguments, a `Connection` and another serializable one (either order).");
 			}
 		}
 	}
