@@ -105,15 +105,27 @@ template rpcFunction(alias f) {
 }
 
 mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
-	////static if (is(typeof(rpcSend))) {
-	////	static foreach (rpc; getSymbolsByUDA!(typeof(this), RPC)) {
-	////		void send(string type, RPCSrc srcs)(Parameters!(Filter!(staticLift!(m=>m & srcs), EnumMembers!RPCSrc)[0])) if (staticFold!(parametersMatch, staticMap!(rpc, Filter!(staticLift!(m=>m & srcs), EnumMembers!RPCSrc)))) {
-	////			writeln;
-	////		}
-	////		mixin("void "~__traits(identifier, rpc)~"_send(RPCSrc srcs)(Parameters!(Filter!(staticLift!(m=>m & srcs), EnumMembers!RPCSrc)[0])) if (staticFold!(parametersMatch, staticMap!(rpc, Filter!(staticLift!(m=>m & srcs), EnumMembers!RPCSrc)))) {
-	////		}");
-	////	}
-	////}
+	static if (is(typeof(rpcSend))) {
+		static foreach (i, rpc; getSymbolsByUDA!(typeof(this), RPC)) {
+			mixin(q{
+				void }~__traits(identifier, rpc)~q{_send(RPCSrc srcs)(Parameters!(rpc!srcs) args) if (allParametersMatch!(staticMap!(rpc, flags!srcs))) {
+					ubyte[] data = [rpcIDs!(typeof(this))[i]];
+					scope(success)
+						rpcSend!srcs(data);
+					foreach (i, arg; args) {
+						static if (__traits(compiles, args.serialize)) {
+							static if (i==args.length-1)
+								alias Attributes = NoLength;
+							else
+								alias Attributes = AliasSeq!();
+							data ~= arg.serialize!Attributes;
+						}
+						else throw new RPCError("Parameter \""~typeof(arg).stringof~"\" of RPC \""~__traits(identifier, rpc)~"\" cannot be serialized.");
+					}
+				}
+			});
+		}
+	}
 	void rpcRecv(RPCSrc src)(ubyte[] data) {
 		////pragma(msg, rpcsWithID!(typeof(this)));
 		enum ids = rpcIDs!(typeof(this));
@@ -251,6 +263,117 @@ unittest {
 	a.rpcRecv!(RPCSrc.self)(null, 1 ~ serialize(1.5f));
 	assert(lastMsg == "msg2: self - 1.5");
 }
+unittest {
+	pragma(msg, "Compiling Test C");
+	import std.stdio;
+	writeln("Running Test C");
+	import std.exception;
+	import std.conv;
+	
+	string lastMsg = "";
+	ubyte[] lastSendData = [];
+	class A {
+		void rpcSend(RPCSrc src)(ubyte[] data) {
+			lastSendData = data;
+		}
+		@RPC
+		void msg(RPCSrc src=RPCSrc.self)(int x) {
+			lastMsg = "msg: "~src.to!string~" - "~x.to!string;
+		}
+		mixin MakeRPCs;
+	}
+	A a = new A;
+	a.msg_send!(RPCSrc.remote)(5);
+	assert(lastSendData == [0,5,0,0,0]);
+}
+unittest {
+	pragma(msg, "Compiling Test D");
+	import std.stdio;
+	writeln("Running Test D");
+	import std.exception;
+	import std.conv;
+	
+	string lastMsg = "";
+	ubyte[] lastSendData = [];
+	class A {
+		void rpcSend(RPCSrc src)(ubyte[] data) {
+			lastSendData = data;
+		}
+		@RPC
+		void msg(RPCSrc src=RPCSrc.self)(int x) {
+			lastMsg = "msg: "~src.to!string~" - "~x.to!string;
+		}
+		@RPC
+		void msg2(RPCSrc src=RPCSrc.self)(float x) {
+			lastMsg = "msg2: "~src.to!string~" - "~x.to!string;
+		}
+		mixin MakeRPCs;
+	}
+	A a = new A;
+	a.msg_send!(RPCSrc.remote)(5);
+	assert(lastSendData == [0,5,0,0,0]);
+	a.msg2_send!(RPCSrc.remote)(1.5);
+	assert(lastSendData == (cast(ubyte)1) ~ 1.5f.serialize);
+}
+unittest {
+	pragma(msg, "Compiling Test E");
+	import std.stdio;
+	writeln("Running Test E");
+	import std.exception;
+	import std.conv;
+	
+	string lastMsg = "";
+	ubyte[] lastSendData = [];
+	class Connection {}
+	template ConnectionType(RPCSrc src) {
+		static if (src == RPCSrc.self)
+			alias ConnectionType = typeof(null);
+		else static if (src == RPCSrc.remote)
+			alias ConnectionType = Connection;
+		else static assert(false, "Missing case.");
+	}
+	class A {
+		void rpcSend(RPCSrc src)(ubyte[] data) {
+			lastSendData = data;
+		}
+		@RPC
+		template msg(RPCSrc src=RPCSrc.self) {
+			static if (src == RPCSrc.self)
+			void msg (int x) {
+				lastMsg = "msg2: "~src.to!string~" - "~x.to!string;
+			}
+			static if (src == RPCSrc.remote)
+			void msg (int x, Connection con) {
+				lastMsg = "msg2: "~src.to!string~" - "~x.to!string;
+			}
+		}
+		@RPC
+		template msg2(RPCSrc src=RPCSrc.self) {
+			static if (src == RPCSrc.self)
+			void msg2 (float x) {
+				lastMsg = "msg2: "~src.to!string~" - "~x.to!string;
+			}
+			static if (src == RPCSrc.remote)
+			void msg2 (float x, long y) {
+				lastMsg = "msg2: "~src.to!string~" - "~x.to!string~" - "~y.to!string;
+			}
+		}
+		mixin MakeRPCs!ConnectionType;
+	}
+	A a = new A;
+	a.msg_send!(RPCSrc.self)(5);
+	assert(lastSendData == [0,5,0,0,0]);
+	a.msg_send!(RPCSrc.remote)(5);
+	assert(lastSendData == [0,5,0,0,0]);
+	a.msg_send!(RPCSrc.self|RPCSrc.remote)(5);
+	assert(lastSendData == [0,5,0,0,0]);
+	a.msg2_send!(RPCSrc.self)(1.5);
+	assert(lastSendData == (cast(ubyte)1) ~ 1.5f.serialize);
+	a.msg2_send!(RPCSrc.remote)(1.5, 2);
+	assert(lastSendData == (cast(ubyte)1) ~ 1.5f.serialize ~ 2L.serialize);
+	assertThrown!Throwable(a.msg2_send!(RPCSrc.self | RPCSrc.remote)(1.5));
+	assertThrown!Throwable(a.msg2_send!(RPCSrc.self | RPCSrc.remote)(1.5, 2));
+}
 
 template staticScan(alias f, List...)
 if (List.length > 1)
@@ -282,8 +405,51 @@ template staticLift(alias f) {
 	}
 }
 template parametersMatch(alias f, alias b) {
-	enum parametersMatch = Parameters!f == Parameters!b;
+	enum parametersMatch = is(Parameters!f == Parameters!b);
+}
+unittest {
+	void a(int, float);
+	void b(int, float);
+	void c(int, long);
+	assert(parametersMatch!(a,b));
+	assert(!parametersMatch!(a,c));
+	assert(parametersMatch!(b,a));
+	assert(!parametersMatch!(c,b));
+}
+template allParametersMatch(Ts...) {
+	static foreach (i; 0..Ts.length-1) {
+		static if (!is(defined) && !parametersMatch!(Ts[i],Ts[i+1])) {
+			enum allParametersMatch = false;
+			enum defined;
+		}
+	}
+	static if (!is(defined))
+		enum allParametersMatch = true;
+}
+unittest {
+	void a(int, float);
+	void b(int, float);
+	void c(int, float);
+	void d(int, long);
+	assert(allParametersMatch!(a,b,c));
+	assert(!allParametersMatch!(a,b,d));
+	assert(allParametersMatch!(c,b,a));
+	assert(!allParametersMatch!(a,d,c));
+}
+template flags(alias fs) if (is(typeof(fs)==enum)) {
+	enum flags = Filter!(staticLift!(f=>f & fs), EnumMembers!(typeof(fs)));
+}
+unittest {
+	enum E {
+		a = 0x1,
+		b = 0x2,
+		c = 0x4,
+	}
+	assert(flags!(E.a|E.c) == AliasSeq!(E.a,E.c));
 }
 
+template Exclam(alias t, Ts...) {
+	alias Exclam = t!Ts;
+}
 
  
