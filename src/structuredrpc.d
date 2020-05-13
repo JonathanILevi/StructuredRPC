@@ -140,17 +140,23 @@ template rpcParametersMatch(alias rpc, alias GetConnectionType, alias RPCSrc, RP
 		enum rpcParametersMatch = true;
 }
 
-mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
+mixin template MakeRPCs(alias RPCTrgt=RPCSrc, alias RPCSrc=RPCSrc, alias GetConnectionType=null) {
 	import std.meta;
 	import std.traits;
 	import std.algorithm;
+	static if (!is(typeof(RPCSrc) == typeof(null)))
+		static assert(![EnumMembers!RPCSrc].any!((RPCSrc a)=>a==0), "`RPCTrgt` must be a flag type.");
+	static if (!is(typeof(RPCTrgt) == typeof(null)))
+		static assert(![EnumMembers!RPCTrgt].any!((RPCTrgt a)=>a==0), "`RPCTrgt` must be a flag type.");
+	static if (!is(typeof(RPCTrgt) == typeof(null))) {
+		static assert(is(typeof(rpcSend)), "`rpcSend` must be defined or `RPCTrgt` (first arg of MakeRPCs) must be `null`.");
 		static foreach (i, rpc; getSymbolsByUDA!(typeof(this), RPC)) {
 			mixin(q{
-				template }~__traits(identifier, rpc)~q{_send(RPCSrc srcs) if (rpcParametersMatch!(rpc,GetConnectionType, RPCSrc, srcs)) }~"{"~q{
-					void }~__traits(identifier, rpc)~q{_send(RPCParametersExt!(rpc, GetConnectionType, RPCSrc, srcs.flags[0]) args) {
+				template }~__traits(identifier, rpc)~q{_send(RPCTrgt trgts) if (is(typeof(rpc!(cast(RPCSrc) trgts.flags[0]))) && rpcParametersMatch!(rpc,GetConnectionType, RPCTrgt, trgts)) }~"{"~q{
+					void }~__traits(identifier, rpc)~q{_send(RPCParametersExt!(rpc, GetConnectionType, RPCSrc, cast(RPCSrc) (trgts.flags[0])) args) {
 						ubyte[] data = [rpcIDs!(typeof(this))[i]];
 						scope(success)
-							rpcSend!srcs(data);
+							rpcSend!trgts(data);
 						foreach (i, arg; args) {
 							static if (__traits(compiles, arg.serialize)) {
 								static if (i==args.length-1)
@@ -234,7 +240,7 @@ unittest {
 		void msg2(RPCSrc src=RPCSrc.self)(float x) {
 			lastMsg = "msg2: "~src.to!string~" - "~x.to!string;
 		}
-		mixin MakeRPCs;
+		mixin MakeRPCs!null;
 	}
 	A a = new A;
 	a.msg!(RPCSrc.self)(5);
@@ -280,7 +286,7 @@ unittest {
 				lastMsg = "msg2: "~src.to!string~" - "~x.to!string;
 			}
 		}
-		mixin MakeRPCs!ConnectionType;
+		mixin MakeRPCs!(null,RPCSrc,ConnectionType);
 	}
 	A a = new A;
 	a.msg!(RPCSrc.self)(5);
@@ -371,7 +377,7 @@ unittest {
 		else static assert(false, "Missing case.");
 	}
 	class A {
-		void rpcSend(RPCSrc src)(ubyte[] data) {
+		void rpcSend(RPCSrc trgts)(ubyte[] data) {
 			lastSendData = data;
 		}
 		@RPC
@@ -396,7 +402,7 @@ unittest {
 				lastMsg = "msg2: "~src.to!string~" - "~x.to!string~" - "~y.to!string;
 			}
 		}
-		mixin MakeRPCs!ConnectionType;
+		mixin MakeRPCs!(RPCSrc,RPCSrc,ConnectionType);
 	}
 	A a = new A;
 	a.msg_send!(RPCSrc.self)(5);
@@ -411,6 +417,46 @@ unittest {
 	assert(lastSendData == (cast(ubyte)1) ~ 1.5f.serialize ~ 2L.serialize);
 	assert(!__traits(compiles, a.msg2_send!(RPCSrc.self | RPCSrc.remote)(1.5)));
 	assert(!__traits(compiles, a.msg2_send!(RPCSrc.self | RPCSrc.remote)(1.5, 2)));
+}
+unittest {
+	pragma(msg, "Compiling Test F");
+	import std.stdio;
+	writeln("Running Test F");
+	import std.exception;
+	import std.conv;
+	
+	enum Src {
+		server = 0x1,
+		client = 0x2,
+	}
+	enum Trgt {
+		client = 0x1,
+		server = 0x2,
+	}
+	
+	ubyte[] lastSendData = [];
+	string lastMsg = "";
+	class A {
+		void rpcSend(Trgt trgts)(ubyte[] data) {
+			lastSendData = data;
+		}
+		@RPC
+		void msg(Src src:Src.client)(int x) {
+			lastMsg = "msg: "~src.to!string~" - "~x.to!string;
+		}
+		@RPC
+		void msg2(Src src:Src.server)(long x) {
+			lastMsg = "msg2: "~src.to!string~" - "~x.to!string;
+		}
+		mixin MakeRPCs!(Trgt,Src,null);
+	}
+	A a = new A;
+	a.msg_send!(Trgt.server)(5);
+	assert(lastSendData == [0, 5,0,0,0]);
+	a.msg2_send!(Trgt.client)(5);
+	assert(lastSendData == [1, 5,0,0,0, 0,0,0,0]);
+	assert(!__traits(compiles, a.msg_send!(Trgt.client)(5)));
+	assert(!__traits(compiles, a.msg2_send!(Trgt.server)(5)));
 }
 
 template staticScan(alias f, List...)
@@ -486,7 +532,7 @@ unittest {
 ////	enum flags = Filter!(staticLift!(f=>f & fs), EnumMembers!(typeof(fs)));
 ////}
 F[] flags(F)(F fs) {
-    return filter!(f=>f & fs)([EnumMembers!(F)]).array;
+	return filter!(f=>f & fs)([EnumMembers!(F)]).array;
 }
 unittest {
 	enum E {
