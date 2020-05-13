@@ -141,7 +141,9 @@ template rpcParametersMatch(alias rpc, alias GetConnectionType, alias RPCSrc, RP
 }
 
 mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
-	static if (is(typeof(rpcSend))) {
+	import std.meta;
+	import std.traits;
+	import std.algorithm;
 		static foreach (i, rpc; getSymbolsByUDA!(typeof(this), RPC)) {
 			mixin(q{
 				template }~__traits(identifier, rpc)~q{_send(RPCSrc srcs) if (rpcParametersMatch!(rpc,GetConnectionType, RPCSrc, srcs)) }~"{"~q{
