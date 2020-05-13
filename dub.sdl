@@ -8,6 +8,6 @@ target	"library"
 targetPath	"build"
 workingDirectory	"build"
 
-dependency "treeserial" version="~>1.0.0-alpha.2"
+dependency "treeserial" version="~>1.0.0-alpha"
 
 
