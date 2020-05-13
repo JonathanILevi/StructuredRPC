@@ -166,7 +166,7 @@ mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
 			});
 		}
 	}
-	void rpcRecv(RPCSrc src)(ubyte[] data) {
+	void rpcRecv(RPCSrc src)(const(ubyte)[] data) {
 		enum ids = rpcIDs!(typeof(this));
 		ubyte msgID = data.deserialize!ubyte;
 		static foreach(id; ids) {
@@ -178,7 +178,7 @@ mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
 				scope (success)
 					rpc(args);
 				foreach (i, Param; Params) {
-					static if (__traits(compiles, (lvalueOf!(ubyte[])).deserialize!Param)) {
+					static if (__traits(compiles, (lvalueOf!(const(ubyte)[])).deserialize!Param)) {
 						static if (i==Params.length-1)
 							alias Attributes = NoLength;
 						else
@@ -191,7 +191,7 @@ mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
 		}
 	}
 	static if (!is(typeof(GetConnectionType) == typeof(null)))
-	void rpcRecv(RPCSrc src)(GetConnectionType!src connection, ubyte[] data) {
+	void rpcRecv(RPCSrc src)(GetConnectionType!src connection, const(ubyte)[] data) {
 		enum ids = rpcIDs!(typeof(this));
 		ubyte msgID = data.deserialize!ubyte;
 		static foreach(id; ids) {
@@ -203,7 +203,7 @@ mixin template MakeRPCs(alias GetConnectionType=null, alias RPCSrc=RPCSrc) {
 				scope (success)
 					rpc(args, connection);
 				foreach (i, Param; Params) {
-					static if (__traits(compiles, (lvalueOf!(ubyte[])).deserialize!Param)) {
+					static if (__traits(compiles, (lvalueOf!(const(ubyte)[])).deserialize!Param)) {
 						static if (i==Params.length-1)
 							alias Attributes = NoLength;
 						else
