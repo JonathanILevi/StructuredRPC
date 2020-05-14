@@ -122,16 +122,16 @@ template RPCParameters(alias f) {
 	alias RPCParameters = Parameters!f;
 }
 
-template RPCParametersExt(alias rpc, alias GetConnectionType, alias RPCSrc, RPCSrc src) {
-	static if (!is(typeof(GetConnectionType) == typeof(null)))
-		alias RPCParametersExt = RPCParameters!(rpc!(src), GetConnectionType!(src));
+template RPCParametersExt(alias rpc, alias SrcType, alias RPCSrc, RPCSrc src) {
+	static if (!is(typeof(SrcType) == typeof(null)))
+		alias RPCParametersExt = RPCParameters!(rpc!(src), SrcType!(src));
 	else
 		alias RPCParametersExt = RPCParameters!(rpc!(src));
 }
-template rpcParametersMatch(alias rpc, alias GetConnectionType, alias RPCSrc, RPCSrc srcs) {
+template rpcParametersMatch(alias rpc, alias SrcType, alias RPCSrc, RPCSrc srcs) {
 	static foreach (i; 0..flags(srcs).length-1) {
-		alias Matcher = aliasSeqMatch!(RPCParametersExt!(rpc,GetConnectionType,RPCSrc,flags(srcs)[i]));
-		static if (!is(defined) && !Matcher!(RPCParametersExt!(rpc,GetConnectionType,RPCSrc,flags(srcs)[i+1]))) {
+		alias Matcher = aliasSeqMatch!(RPCParametersExt!(rpc,SrcType,RPCSrc,flags(srcs)[i]));
+		static if (!is(defined) && !Matcher!(RPCParametersExt!(rpc,SrcType,RPCSrc,flags(srcs)[i+1]))) {
 			enum rpcParametersMatch = false;
 			enum defined;
 		}
@@ -140,20 +140,14 @@ template rpcParametersMatch(alias rpc, alias GetConnectionType, alias RPCSrc, RP
 		enum rpcParametersMatch = true;
 }
 
-mixin template MakeRPCs(alias RPCTrgt=RPCSrc, alias RPCSrc=RPCSrc, alias GetConnectionType=null) {
-	import std.meta;
-	import std.traits;
-	import std.algorithm;
-	static if (!is(typeof(RPCSrc) == typeof(null)))
-		static assert(![EnumMembers!RPCSrc].any!((RPCSrc a)=>a==0), "`RPCTrgt` must be a flag type.");
-	static if (!is(typeof(RPCTrgt) == typeof(null)))
-		static assert(![EnumMembers!RPCTrgt].any!((RPCTrgt a)=>a==0), "`RPCTrgt` must be a flag type.");
-	static if (!is(typeof(RPCTrgt) == typeof(null))) {
-		static assert(is(typeof(rpcSend)), "`rpcSend` must be defined or `RPCTrgt` (first arg of MakeRPCs) must be `null`.");
+mixin template MakeRPCsImpl(alias RPCSrc, alias RPCTrgt, alias SrcType, alias TrgtType) {
+	static if (is(RPCTrgt)) {
+		////static assert(is(typeof(rpcSend)), "`rpcSend` must be defined or `RPCTrgt` (first arg of MakeRPCs) must be `null`.");
 		static foreach (i, rpc; getSymbolsByUDA!(typeof(this), RPC)) {
 			mixin(q{
-				template }~__traits(identifier, rpc)~q{_send(RPCTrgt trgts) if (is(typeof(rpc!(cast(RPCSrc) trgts.flags[0]))) && rpcParametersMatch!(rpc,GetConnectionType, RPCTrgt, trgts)) }~"{"~q{
+				template }~__traits(identifier, rpc)~q{_send(RPCTrgt trgts) if (is(typeof(rpc!(cast(RPCSrc) trgts.flags[0]))) && rpcParametersMatch!(rpc,SrcType, RPCTrgt, trgts)) }~"{"~q{
 					void }~__traits(identifier, rpc)~q{_send(RPCParametersExt!(rpc, GetConnectionType, RPCSrc, cast(RPCSrc) (trgts.flags[0])) args) {
+					void }~__traits(identifier, rpc)~q{_send(RPCParametersExt!(rpc, SrcType, RPCSrc, cast(RPCSrc) (trgts.flags[0])) args) {
 						ubyte[] data = [rpcIDs!(typeof(this))[i]];
 						scope(success)
 							rpcSend!trgts(data);
@@ -196,14 +190,14 @@ mixin template MakeRPCs(alias RPCTrgt=RPCSrc, alias RPCSrc=RPCSrc, alias GetConn
 			}
 		}
 	}
-	static if (!is(typeof(GetConnectionType) == typeof(null)))
-	void rpcRecv(RPCSrc src)(GetConnectionType!src connection, const(ubyte)[] data) {
+	static if (!is(typeof(SrcType) == typeof(null)))
+	void rpcRecv(RPCSrc src)(SrcType!src connection, const(ubyte)[] data) {
 		enum ids = rpcIDs!(typeof(this));
 		ubyte msgID = data.deserialize!ubyte;
 		static foreach(id; ids) {
 			if (msgID == id) {
 				alias rpcTemplate = rpcByID!(typeof(this),id);
-				alias rpc = rpcFunction!((Parameters!(rpcTemplate!src) args)=>rpcTemplate!src(args), GetConnectionType!src);
+				alias rpc = rpcFunction!((Parameters!(rpcTemplate!src) args)=>rpcTemplate!src(args), SrcType!src);
 				alias Params = Parameters!rpc[0..$-1];
 				Params args;
 				scope (success)
@@ -216,11 +210,67 @@ mixin template MakeRPCs(alias RPCTrgt=RPCSrc, alias RPCSrc=RPCSrc, alias GetConn
 							alias Attributes = AliasSeq!();
 						args[i] = data.deserialize!(Param, Attributes);
 					}
-					else throw new RPCError("Parameter `"~Param.stringof~"` of RPC `"~__traits(identifier, rpcTemplate)~"` cannot be deserialized.  If you think this should be the connection type, then for `"~RPCSrc.stringof~"."~__traits(identifier, src)~"` it should be of type `"~GetConnectionType!src.stringof~"` (Correct parameter or `GetConnectionType` or src).");
+					else throw new RPCError("Parameter `"~Param.stringof~"` of RPC `"~__traits(identifier, rpcTemplate)~"` cannot be deserialized.  If you think this should be the connection type, then for `"~RPCSrc.stringof~"."~__traits(identifier, src)~"` it should be of type `"~SrcType!src.stringof~"` (Correct parameter or `SrcType` or src).");
 				}
 			}
 		}
 	}
+}
+
+template MakeRPCsArgs(This, Ts...) {
+	import std.meta;
+	import std.traits;
+	import std.algorithm;
+	
+	static foreach (T; Ts) {
+		static if (is(T==enum)) {
+			static if (!is(MakeRPCs_RPCSrc)) {
+				alias MakeRPCs_RPCSrc = T;
+			}
+			else static if (!is(MakeRPCs_RPCTrgt)) {
+				alias MakeRPCs_RPCTrgt = T;
+				static assert(is(typeof(This.rpcSend)), "`MakeRPCs` was given a second enum for `RPCTrgt`, but `rpcSend` is undefined.");
+				////static assert(is(typeof(rpcSend!(rvalueOf!RPCTrgt))), "`rpcSend` is undefined, but not right, rpcSend must be: `void rpcSend(RPCTrgt trgts)(...)`");
+			}
+			else static assert(false, "`MakeRPCs` was given more than 2 enums.  Accepts 0-2.");
+		}
+		else {
+			static if (!is(MakeRPCs_SrcType)) {
+				alias MakeRPCs_SrcType = T;
+			}
+			else static if (!is(MakeRPCs_TrgtType)) {
+				alias MakeRPCs_TrgtType = T;
+			}
+			else static assert(false);
+		}
+	}
+	static if (!is(MakeRPCs_RPCSrc)) {
+		alias MakeRPCs_RPCSrc = RPCSrc;
+	}
+	static if (!is(MakeRPCs_RPCTrgt)) {
+		static if (is(typeof(This.rpcSend)))
+			alias MakeRPCs_RPCTrgt = RPCSrc;
+		else
+			enum MakeRPCs_RPCTrgt = null; 
+		////static assert(is(typeof(rpcSend!(rvalueOf!RPCTrgt))), "`rpcSend` is undefined, but not right, rpcSend must be: `void rpcSend(RPCTrgt trgts)(...)`.  Either give an appropriate RPCTrgt (pass a second enum to `MakeRPCs`) or `rpcSend` should work with `RPCSrc`.");
+	}
+	static if (!(is(MakeRPCs_SrcType) || is(typeof(MakeRPCs_SrcType)))) {
+		enum MakeRPCs_SrcType = null;
+	}
+	static if (!(is(MakeRPCs_TrgtType) || is(typeof(MakeRPCs_TrgtType)))) {
+		enum MakeRPCs_TrgtType = null;
+	}
+	
+	static if (!is(MakeRPCs_RPCSrc))
+		static assert(![EnumMembers!MakeRPCs_RPCSrc].any!((MakeRPCs_RPCSrc a)=>a==0), "`RPCTrgt` must be a flag type.");
+	static if (is(MakeRPCs_RPCTrgt))
+		static assert(![EnumMembers!MakeRPCs_RPCTrgt].any!((MakeRPCs_RPCTrgt a)=>a==0), "`RPCTrgt` must be a flag type.");
+	
+	alias MakeRPCsArgs = AliasSeq!(MakeRPCs_RPCSrc, MakeRPCs_RPCTrgt, MakeRPCs_SrcType, MakeRPCs_TrgtType);
+}
+
+template MakeRPCs(Ts...) {
+	mixin MakeRPCsImpl!(MakeRPCsArgs!(typeof(this),Ts));
 }
 
 unittest {
@@ -240,7 +290,7 @@ unittest {
 		void msg2(RPCSrc src=RPCSrc.self)(float x) {
 			lastMsg = "msg2: "~src.to!string~" - "~x.to!string;
 		}
-		mixin MakeRPCs!null;
+		mixin MakeRPCs;
 	}
 	A a = new A;
 	a.msg!(RPCSrc.self)(5);
@@ -286,7 +336,7 @@ unittest {
 				lastMsg = "msg2: "~src.to!string~" - "~x.to!string;
 			}
 		}
-		mixin MakeRPCs!(null,RPCSrc,ConnectionType);
+		mixin MakeRPCs!(RPCSrc,ConnectionType);
 	}
 	A a = new A;
 	a.msg!(RPCSrc.self)(5);
@@ -448,7 +498,7 @@ unittest {
 		void msg2(Src src:Src.server)(long x) {
 			lastMsg = "msg2: "~src.to!string~" - "~x.to!string;
 		}
-		mixin MakeRPCs!(Trgt,Src,null);
+		mixin MakeRPCs!(Src, Trgt);
 	}
 	A a = new A;
 	a.msg_send!(Trgt.server)(5);
