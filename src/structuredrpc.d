@@ -157,6 +157,10 @@ template RPCSendConnections(alias TrgtType, RPCTrgt, RPCTrgt trgts) {
 }
 
 mixin template MakeRPCsImpl(alias RPCSrc, alias RPCTrgt, alias SrcType, alias TrgtType) {
+	import std.meta;
+	import std.traits;
+	import std.algorithm;
+	
 	static if (is(RPCTrgt)) {
 		////static assert(is(typeof(rpcSend)), "`rpcSend` must be defined or `RPCTrgt` (first arg of MakeRPCs) must be `null`.");
 		static foreach (i, rpc; getSymbolsByUDA!(typeof(this), RPC)) {
@@ -233,10 +237,6 @@ mixin template MakeRPCsImpl(alias RPCSrc, alias RPCTrgt, alias SrcType, alias Tr
 }
 
 template MakeRPCsArgs(This, Ts...) {
-	import std.meta;
-	import std.traits;
-	import std.algorithm;
-	
 	static foreach (T; Ts) {
 		static if (is(T==enum)) {
 			static if (!is(MakeRPCs_RPCSrc)) {
