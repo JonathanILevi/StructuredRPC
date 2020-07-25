@@ -1,4 +1,4 @@
-module orderedrpc;
+module structuredrpc;
 
 import treeserial;
 
