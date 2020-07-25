@@ -133,28 +133,30 @@ mixin template MakeRPCReceive(Src, Connection, alias Serializer) {
 	}
 }
 mixin template MakeRPCReceive(Src) {
+	import treeserial;
 	mixin MakeRPCReceive!(Src, typeof(null), Serializer!());
 }
 mixin template MakeRPCReceive(Src, alias Serializer) {
 	mixin MakeRPCReceive!(Src, typeof(null), Serializer);
 }
 mixin template MakeRPCReceive(Src, Connection) {
+	import treeserial;
 	mixin MakeRPCReceive!(Src, Connection, Serializer!());
 }
 
 
-mixin template MakeRPCSend(Src, Connection, alias Serializer) {
+mixin template MakeRPCSendToImpl(SendTo, Src, ToConnection, Connection, alias Serializer) {
 	import std.meta;
 	import std.traits;
 	import std.algorithm;
 	import treeserial;
 	
-	static foreach (i, rpc; getSymbolsByUDA!(typeof(this), RPC!Src)) {
+	static foreach (i, rpc; getSymbolsByUDA!(SendTo, RPC!Src)) {
 		mixin(q{
 			template }~__traits(identifier, rpc)~q{_send(S:Src) }~"{"~q{
 				////alias _ =  Parameters!rpc;// Stops some glitchy "recursive template expansion" compile error.
-				void }~__traits(identifier, rpc)~q{_send(RPCConnectionsParam!Connection connections, RPCParameters!(rpc, Connection) args) {
-					const(ubyte)[] data = Serializer.serialize!ubyte(rpcIDs!(Src, typeof(this))[i]);
+				void }~__traits(identifier, rpc)~q{_send(RPCConnectionsParam!Connection connections, RPCParameters!(rpc, ToConnection) args) {
+					const(ubyte)[] data = Serializer.serialize!ubyte(rpcIDs!(Src, SendTo)[i]);
 					alias rpcSend = getSymbolsByUDA!(typeof(this), RPCSend!Src)[0];
 					scope(success)
 						rpcSend(connections, data);
@@ -177,214 +179,38 @@ mixin template MakeRPCSend(Src, Connection, alias Serializer) {
 		});
 	}
 }
-mixin template MakeRPCSend(Src) {
-	mixin MakeRPCSend!(Src, typeof(null), Serializer!());
+mixin template MakeRPCSendTo(SendTo, Src, ConnectionTo, alias Serializer) {
+	import std.traits;
+	static if (Parameters!(getSymbolsByUDA!(typeof(this), RPCSend!Src)[0]).length==1)
+		mixin MakeRPCSendToImpl!(SendTo, Src, ConnectionTo, typeof(null), Serializer);
+	else
+		mixin MakeRPCSendToImpl!(SendTo, Src, ConnectionTo, ForeachType!(Parameters!(getSymbolsByUDA!(typeof(this), RPCSend!Src)[0])[0]), Serializer);
 }
-mixin template MakeRPCSend(Src, alias Serializer) {
-	mixin MakeRPCSend!(Src, typeof(null), Serializer);
+mixin template MakeRPCSendTo(SendTo, Src) {
+	import treeserial;
+	mixin MakeRPCSendTo!(SendTo, Src, typeof(null), Serializer!());
 }
-mixin template MakeRPCSend(Src, Connection) {
-	mixin MakeRPCSend!(Src, Connection, Serializer!());
+mixin template MakeRPCSendTo(SendTo, Src, alias Serializer) {
+	mixin MakeRPCSendTo!(SendTo, Src, typeof(null), Serializer);
+}
+mixin template MakeRPCSendTo(SendTo, Src, Connection) {
+	import treeserial;
+	mixin MakeRPCSendTo!(SendTo, Src, Connection, Serializer!());
 }
 
-unittest {
-	pragma(msg, "Compiling Test A");
-	import std.stdio;
-	writeln("Running Test A");
-	import std.exception;
-	import std.conv;
-	
-	enum Src;
-	
-	string lastMsg = "";
-	class A {
-		@RPC!Src
-		void msg(int x) {
-			lastMsg = "msg: "~x.to!string;
-		}
-		@RPC!Src
-		void msg2(float x) {
-			lastMsg = "msg2: "~x.to!string;
-		}
-		mixin MakeRPCReceive!Src;
-	}
-	A a = new A;
-	a.msg(5);
-	assert(lastMsg == "msg: 5");
-	a.rpcRecv!Src(0 ~ serialize(1));
-	assert(lastMsg == "msg: 1");
+mixin template MakeRPCSend(Src, Connection, alias Serializer) {
+	mixin MakeRPCSendTo!(typeof(this), Src, Connection, Serializer);
 }
-unittest {
-	pragma(msg, "Compiling Test B");
-	import std.stdio;
-	writeln("Running Test B");
-	import std.exception;
-	import std.conv;
-	
-	enum Src;
-	class Connection {}
-	
-	string lastMsg = "";
-	class A {
-		@RPC!Src
-		void msg(int x) {
-			lastMsg = "msg: "~x.to!string;
-		}
-		void msg2(float x) {
-			lastMsg = "msg2: "~x.to!string;
-		}
-		@RPC!Src
-		void msg2(float x, Connection con) {
-			lastMsg = "msg2: remote - "~x.to!string;
-		}
-		@RPC!Src
-		void msg3(Connection con, float x) {
-			lastMsg = "msg3: remote - "~x.to!string;
-		}
-		@RPC!Src
-		void msg4(float x) {
-			lastMsg = "msg4: remote - "~x.to!string;
-		}
-		mixin MakeRPCReceive!(Src, Connection);
-	}
-	A a = new A;
-	a.msg(5);
-	assert(lastMsg == "msg: 5");
-	a.rpcRecv!Src(0 ~ serialize(1));
-	assert(lastMsg == "msg: 1");
-	assertThrown!Throwable(a.rpcRecv!Src(1 ~ serialize(1.5f)));
-	a.rpcRecv!Src(new Connection(), 1 ~ serialize(1f));
-	assert(lastMsg == "msg2: remote - 1");
-	a.rpcRecv!Src(new Connection(), 2 ~ serialize(1f));
-	assert(lastMsg == "msg3: remote - 1");
-	a.rpcRecv!Src(new Connection(), 3 ~ serialize(1f));
-	assert(lastMsg == "msg4: remote - 1");
+mixin template MakeRPCSend(Src) {
+	import treeserial;
+	mixin MakeRPCSendTo!(typeof(this), Src, typeof(null), Serializer!());
 }
-unittest {
-	pragma(msg, "Compiling Test C");
-	import std.stdio;
-	writeln("Running Test C");
-	import std.exception;
-	import std.conv;
-	
-	enum SrcClient;
-	enum SrcServer;
-	class Client {}
-	
-	string lastMsg = "";
-	class A {
-		@RPC!SrcClient
-		void msg(int x, Client client) {
-			lastMsg = "msg: "~x.to!string;
-		}
-		@RPC!SrcServer
-		void msg2(int x) {
-			lastMsg = "msg2: "~x.to!string;
-		}
-		@RPC!SrcClient @RPC!SrcServer
-		void msg3(int x) {
-			lastMsg = "msg3: "~x.to!string;
-		}
-		mixin MakeRPCReceive!(SrcClient, Client);
-		mixin MakeRPCReceive!(SrcServer);
-	}
-	A a = new A;
-	a.rpcRecv!SrcClient(new Client, 0 ~ serialize(1));
-	assert(lastMsg == "msg: 1");
-	a.rpcRecv!SrcClient(new Client, 1 ~ serialize(1));
-	assert(lastMsg == "msg3: 1");
-	a.rpcRecv!SrcServer(0 ~ serialize(1));
-	assert(lastMsg == "msg2: 1");
-	a.rpcRecv!SrcServer(1 ~ serialize(1));
-	assert(lastMsg == "msg3: 1");
+mixin template MakeRPCSend(Src, alias Serializer) {
+	mixin MakeRPCSendTo!(typeof(this), Src, typeof(null), Serializer);
 }
-unittest {
-	pragma(msg, "Compiling Test D");
-	import std.stdio;
-	writeln("Running Test D");
-	import std.exception;
-	import std.conv;
-	
-	enum Src;
-	
-	string lastMsg = "";
-	const(ubyte)[] lastSendData = [];
-	class A {
-		@RPCSend!Src
-		void rpcSend(const(ubyte)[] data) {
-			lastSendData = data;
-		}
-		@RPC!Src
-		void msg(int x) {
-			lastMsg = "msg: "~x.to!string;
-		}
-		mixin MakeRPCReceive!Src;
-		mixin MakeRPCSend!Src;
-	}
-	A a = new A;
-	a.msg_send!Src(5);
-	assert(lastSendData == [0,5,0,0,0]);
-}
-unittest {
-	pragma(msg, "Compiling Test E");
-	import std.stdio;
-	writeln("Running Test E");
-	import std.exception;
-	import std.conv;
-	
-	enum SrcClient;
-	enum SrcServer;
-	class Client {}
-	
-	string lastMsg = "";
-	const(ubyte)[] lastSendData = [];
-	class A {
-		@RPC!SrcClient
-		void msg(int x, Client client) {
-			lastMsg = "msg: "~x.to!string;
-		}
-		@RPC!SrcServer
-		void msg2(int x) {
-			lastMsg = "msg2: "~x.to!string;
-		}
-		@RPC!SrcClient @RPC!SrcServer
-		void msg3(int x) {
-			lastMsg = "msg3: "~x.to!string;
-		}
-		mixin MakeRPCReceive!(SrcClient, Client);
-		mixin MakeRPCReceive!(SrcServer);
-		@RPCSend!SrcClient
-		void rpcSend(Client[] clients, const(ubyte)[] data) {
-			lastSendData = 0~data;
-		}
-		@RPCSend!SrcServer
-		void rpcSend(const(ubyte)[] data) {
-			lastSendData = 1~data;
-		}
-		mixin MakeRPCSend!(SrcClient, Client);
-		mixin MakeRPCSend!(SrcServer);
-	}
-	A a = new A;
-	a.msg_send!SrcClient([new Client], 1);
-	assert(lastSendData == [0, 0,1,0,0,0]);
-	
-	a.msg_send!SrcClient(new Client, 5);
-	assert(lastSendData == [0, 0,5,0,0,0]);
-	a.msg2_send!SrcServer(5);
-	assert(lastSendData == [1, 0,5,0,0,0]);
-	a.msg3_send!SrcClient(new Client, 5);
-	assert(lastSendData == [0, 1,5,0,0,0]);
-	a.msg3_send!SrcServer(5);
-	assert(lastSendData == [1, 1,5,0,0,0]);
-	
-	a.rpcRecv!SrcClient(new Client, 0 ~ serialize(1));
-	assert(lastMsg == "msg: 1");
-	a.rpcRecv!SrcClient(new Client, 1 ~ serialize(1));
-	assert(lastMsg == "msg3: 1");
-	a.rpcRecv!SrcServer(0 ~ serialize(1));
-	assert(lastMsg == "msg2: 1");
-	a.rpcRecv!SrcServer(1 ~ serialize(1));
-	assert(lastMsg == "msg3: 1");
+mixin template MakeRPCSend(Src, Connection) {
+	import treeserial;
+	mixin MakeRPCSendTo!(typeof(this), Src, Connection, Serializer!());
 }
 
  

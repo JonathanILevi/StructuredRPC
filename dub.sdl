@@ -10,4 +10,9 @@ workingDirectory	"build"
 
 dependency "treeserial" version="~>1.0.0-alpha"
 
+configuration "unittest" {
+	sourcePaths "src" "test_src"
+	importPaths "src" "test_src"
+}
+
 
