@@ -48,8 +48,13 @@ template rpcByID(Src, alias symbol, ubyte id) {
 }
 
 
-template RPCParameters(alias f, Connection) {
-	alias Params = Parameters!f;
+template RPCParameters(alias rpc, Src, Connection) {
+	static if (__traits(isTemplate, rpc)) {
+		alias Params = Parameters!(rpc!Src);
+	}
+	else {
+		alias Params = Parameters!rpc;
+	}
 	static if (is(Connection == typeof(null))) {
 		alias RPCParameters = Params;
 	}
@@ -70,6 +75,12 @@ template RPCConnectionsParam(Connection) {
 		alias RPCConnectionsParam = Connection[];
 }
 
+string identifier(string id) {
+	import std.conv;
+	return id.strip('_');
+	////return id.find!"a != '_'".array.to!string;
+}
+
 mixin template MakeRPCReceive(Src, Connection, alias Serializer) {
 	import std.meta;
 	import std.traits;
@@ -82,7 +93,11 @@ mixin template MakeRPCReceive(Src, Connection, alias Serializer) {
 			ubyte msgID = Serializer.deserialize!ubyte(data);
 			static foreach(id; ids) {
 				if (msgID == id) {
-					alias rpc = rpcByID!(Src, typeof(this),id);
+					alias rpcTemplate = rpcByID!(Src, typeof(this),id);
+					static if (__traits(isTemplate, rpcTemplate))
+						alias rpc = rpcTemplate!Src;
+					else
+						alias rpc = rpcTemplate;
 					alias Params = Parameters!rpc;
 					Params args;
 					scope (success)
@@ -106,8 +121,12 @@ mixin template MakeRPCReceive(Src, Connection, alias Serializer) {
 			ubyte msgID = Serializer.deserialize!ubyte(data);
 			static foreach(id; ids) {
 				if (msgID == id) {
-					alias rpc = rpcByID!(Src, typeof(this),id);
-					alias Params = RPCParameters!(rpc,Connection);
+					alias rpcTemplate = rpcByID!(Src, typeof(this),id);
+					static if (__traits(isTemplate, rpcTemplate))
+						alias rpc = rpcTemplate!Src;
+					else
+						alias rpc = rpcTemplate;
+					alias Params = RPCParameters!(rpc, Src, Connection);
 					Params args;
 					scope (success) {
 						static if (is(Parameters!rpc[0] == Connection))
@@ -153,27 +172,44 @@ mixin template MakeRPCSendToImpl(SendTo, Src, ToConnection, Connection, alias Se
 	
 	static foreach (i, rpc; getSymbolsByUDA!(SendTo, RPC!Src)) {
 		mixin(q{
-			template }~__traits(identifier, rpc)~q{_send(S:Src) }~"{"~q{
-				////alias _ =  Parameters!rpc;// Stops some glitchy "recursive template expansion" compile error.
-				void }~__traits(identifier, rpc)~q{_send(RPCConnectionsParam!Connection connections, RPCParameters!(rpc, ToConnection) args) {
+			template }~__traits(identifier, rpc).identifier~q{_send(S:Src) }~"{"~q{
+				auto }~__traits(identifier, rpc).identifier~q{_send(RPCConnectionsParam!Connection connections, const RPCParameters!(rpc, Src, ToConnection) args) {
 					const(ubyte)[] data = Serializer.serialize!ubyte(rpcIDs!(Src, SendTo)[i]);
 					alias rpcSend = getSymbolsByUDA!(typeof(this), RPCSend!Src)[0];
-					scope(success)
-						rpcSend(connections, data);
 					foreach (i, arg; args) {
 						static if (serializable!arg) {
 							static if (i==args.length-1)
 								alias Attributes = NoLength;
 							else
 								alias Attributes = AliasSeq!();
-							data ~= Serializer.Subserializer!(Attributes).serialize(arg);
+							data ~= Serializer.Subserializer!Attributes.serialize(arg);
 						}
 						else throw new RPCError("Parameter \""~typeof(arg).stringof~"\" of RPC \""~__traits(identifier, rpc)~"\" cannot be serialized.");
 					}
+					return rpcSend(connections, data);
 				}
+				
+				// So last last argument can be different for each client.
+				static if (RPCParameters!(rpc, Src, ToConnection).length >= 1)
+				auto }~__traits(identifier, rpc).identifier~q{_send(RPCConnectionsParam!Connection connections, const RPCParameters!(rpc, Src, ToConnection)[0..$-1] args, const RPCParameters!(rpc, Src, ToConnection)[$-1][] lastArgs) {
+					assert(connections.length == lastArgs.length);
+					ubyte[] data = Serializer.serialize!ubyte(rpcIDs!(Src, SendTo)[i]);
+					alias rpcSend = getSymbolsByUDA!(typeof(this), RPCSend!Src)[0];
+					foreach (i, arg; args) {
+						static if (serializable!arg) {
+							data ~= Serializer.Subserializer!().serialize(arg);
+						}
+						else throw new RPCError("Parameter \""~typeof(arg).stringof~"\" of RPC \""~__traits(identifier, rpc)~"\" cannot be serialized.");
+					}
+					foreach (i, connection; connections) {
+						data.assumeSafeAppend;
+						rpcSend([connection], data~Serializer.Subserializer!NoLength.serialize(lastArgs[i]));
+					}
+				}
+				
 				static if (!is(Connection == typeof(null)))
-				void }~__traits(identifier, rpc)~q{_send(Connection connection, RPCParameters!(rpc, Connection) args) }~"{
-					"~__traits(identifier, rpc)~"_send([connection], args);
+				auto }~__traits(identifier, rpc).identifier~q{_send(Connection connection, const RPCParameters!(rpc, Src, Connection) args) }~"{
+					return "~__traits(identifier, rpc).identifier~"_send([connection], args);
 				}
 			}"~q{
 		});
